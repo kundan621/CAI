@@ -1,7 +1,27 @@
-transformers>=4.36.0
-peft>=0.7.0
-datasets>=2.15.0
+# Core ML libraries for MPS/Apple Silicon compatibility
 torch>=2.1.0
-pandas>=1.5.0
-bitsandbytes>=0.43.1
+transformers>=4.36.0
+datasets>=2.15.0
+tokenizers>=0.15.0
+
+# PEFT and training
+peft>=0.7.0
 accelerate>=0.25.0
+
+# Data handling
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Quantization (optional - only for CUDA, not needed for MPS)
+bitsandbytes>=0.43.1  # Skip on MPS/Apple Silicon
+
+# Jupyter and development
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+
+# Utilities
+tqdm>=4.64.0
+scikit-learn>=1.3.0
+
+# Note: For Apple Silicon (M1/M2/M3/M4), install PyTorch with MPS support:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
