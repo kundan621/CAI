@@ -3,7 +3,7 @@ import time
 import numpy as np
 from search_final import rag_pipeline
 
-# --- UI Layout ---
+# --- UI Layouts ---
 st.set_page_config(page_title="Finance QA Assistant", layout="centered")
 st.title("Finance QA Assistant")
 
