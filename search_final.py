@@ -60,7 +60,7 @@ try:
     reranker = CrossEncoder(CROSS_ENCODER)
     client = OpenAI(
         base_url="https://router.huggingface.co/v1",
-        api_key="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"
+        api_key = os.getenv("HF_API_KEY")
     )
 except Exception as e:
     logger.error(f"Error loading models or indexes: {e}")
