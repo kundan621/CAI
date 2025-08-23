@@ -8,12 +8,18 @@ tokenizers>=0.15.0
 peft>=0.7.0
 accelerate>=0.25.0
 
+# RAG and Search dependencies
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4
+rank-bm25>=0.2.2
+nltk>=3.8.0
+
 # Data handling
 pandas>=1.5.0
 numpy>=1.24.0
 
 # Quantization (optional - only for CUDA, not needed for MPS)
-bitsandbytes>=0.43.1  # Skip on MPS/Apple Silicon
+bitsandbytes>=0.42.0  # Skip on MPS/Apple Silicon
 
 # Jupyter and development
 jupyter>=1.0.0
