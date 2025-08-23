@@ -1,3 +1,4 @@
+
 import os
 import re
 import pickle
@@ -11,6 +12,15 @@ from nltk.corpus import stopwords
 import requests
 import json
 from openai import OpenAI
+import logging
+
+# ---------------- Logging Setup ----------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 nltk.download("stopwords")
 STOPWORDS = set(stopwords.words("english"))
@@ -38,23 +48,23 @@ FINANCE_DOMAINS = [
 ]
 
 # ---------------- Load Indexes ----------------
-print("Loading FAISS, BM25, metadata, and models...")
-faiss_index = faiss.read_index(FAISS_PATH)
-
-with open(BM25_PATH, "rb") as f:
-    bm25_obj = pickle.load(f)
-bm25 = bm25_obj["bm25"]
-
-with open(META_PATH, "rb") as f:
-    meta: List[Dict] = pickle.load(f)
-
-embed_model = SentenceTransformer(EMBED_MODEL)
-reranker = CrossEncoder(CROSS_ENCODER)
-
-client = OpenAI(
-    base_url="https://router.huggingface.co/v1",
-    api_key="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"
-)
+logger.info("Loading FAISS, BM25, metadata, and models...")
+try:
+    faiss_index = faiss.read_index(FAISS_PATH)
+    with open(BM25_PATH, "rb") as f:
+        bm25_obj = pickle.load(f)
+    bm25 = bm25_obj["bm25"]
+    with open(META_PATH, "rb") as f:
+        meta: List[Dict] = pickle.load(f)
+    embed_model = SentenceTransformer(EMBED_MODEL)
+    reranker = CrossEncoder(CROSS_ENCODER)
+    client = OpenAI(
+        base_url="https://router.huggingface.co/v1",
+        api_key="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"
+    )
+except Exception as e:
+    logger.error(f"Error loading models or indexes: {e}")
+    raise
 
 # ---------------- Hugging Face Mistral API ----------------
 #HF_TOKEN = "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"
@@ -63,19 +73,26 @@ client = OpenAI(
 def get_mistral_answer(query: str, context: str) -> str:
     """
     Calls Mistral 7B Instruct API via Hugging Face Inference API.
+    Adds error handling and logging.
     """
     prompt = f"Context:\n{context}\n\nQuestion: {query}\nAnswer in full sentences using context."
-
-    completion = client.chat.completions.create(
-        model="mistralai/Mistral-7B-Instruct-v0.2:featherless-ai",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
-    return str(completion.choices[0].message.content)
+    try:
+        logger.info(f"Calling Mistral API for query: {query}")
+        completion = client.chat.completions.create(
+            model="mistralai/Mistral-7B-Instruct-v0.2:featherless-ai",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        answer = str(completion.choices[0].message.content)
+        logger.info(f"Mistral API response: {answer}")
+        return answer
+    except Exception as e:
+        logger.error(f"Error in Mistral API call: {e}")
+        return f"Error fetching answer from LLM: {e}"
 
 # ---------------- Guardrails ----------------
 finance_embeds = embed_model.encode(FINANCE_DOMAINS, convert_to_tensor=True)
@@ -155,32 +172,42 @@ def extract_value_for_year_and_concept(year: str, concept: str, context_docs: Li
                 col_idx = year_to_col[target_year]
                 if col_idx < len(cols):
                     return cols[col_idx].replace(",", "")
-    return None
+    return ""
 
 # ---------------- RAG Pipeline ----------------
 def rag_pipeline(query: str, top_k: int = 5, candidate_k: int = 50, alpha: float = 0.6):
-    if not validate_query(query):
-        return "Query rejected: Please ask finance-related questions.", []
+    logger.info(f"Received query: {query}")
+    try:
+        if not validate_query(query):
+            logger.warning("Query rejected: Not finance-related.")
+            return "Query rejected: Please ask finance-related questions.", []
 
-    cand_ids = hybrid_candidates(query, candidate_k=candidate_k, alpha=alpha)
-    reranked = rerank_cross_encoder(query, cand_ids, top_k=top_k)
+        cand_ids = hybrid_candidates(query, candidate_k=candidate_k, alpha=alpha)
+        logger.info(f"Hybrid candidates retrieved: {cand_ids}")
+        reranked = rerank_cross_encoder(query, cand_ids, top_k=top_k)
+        logger.info(f"Reranked top docs: {[d['id'] for d in reranked]}")
 
-    year_match = re.search(r"(20\d{2})", query)
-    year = year_match.group(0) if year_match else None
-    concept = re.sub(r"for the year 20\d{2}", "", query, flags=re.IGNORECASE).strip()
+        year_match = re.search(r"(20\d{2})", query)
+        year = year_match.group(0) if year_match else None
+        concept = re.sub(r"for the year 20\d{2}", "", query, flags=re.IGNORECASE).strip()
 
-    year_specific_answer = None
-    if year and concept:
-        year_specific_answer = extract_value_for_year_and_concept(year, concept, reranked)
+        year_specific_answer = None
+        if year and concept:
+            year_specific_answer = extract_value_for_year_and_concept(year, concept, reranked)
+            logger.info(f"Year-specific answer: {year_specific_answer}")
 
-    if year_specific_answer:
-        answer = year_specific_answer
-    else:
-        # Pass top 5 chunks as context
-        context_text = "\n".join([d["content"] for d in reranked])
-        answer = get_mistral_answer(query, context_text)
+        if year_specific_answer:
+            answer = year_specific_answer
+        else:
+            # Pass top 5 chunks as context
+            context_text = "\n".join([d["content"] for d in reranked])
+            answer = get_mistral_answer(query, context_text)
 
-    return answer, reranked
+        logger.info(f"Final Answer: {answer}")
+        return answer, reranked
+    except Exception as e:
+        logger.error(f"Error in RAG pipeline: {e}")
+        return f"Error in RAG pipeline: {e}", []
 
 # ---------------- Example ----------------
 if __name__ == "__main__":
