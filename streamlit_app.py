@@ -3,9 +3,6 @@ import time
 import numpy as np
 from search_final import rag_pipeline
 
-# --- Fine-tuned model loader ---
-from Fine_Tuning_TinyLlama import generate_finetuned_answer, model as finetuned_model, tokenizer as finetuned_tokenizer
-
 # --- UI Layout ---
 st.set_page_config(page_title="Finance QA Assistant", layout="centered")
 st.title("Finance QA Assistant")
@@ -20,10 +17,6 @@ if st.button("Get Answer") and query:
         answer, docs = rag_pipeline(query)
         confidence = np.random.uniform(0.7, 0.99)
         method = "RAG"
-    else:
-        answer = generate_finetuned_answer(query, finetuned_model, finetuned_tokenizer)
-        confidence = np.random.uniform(0.6, 0.95)
-        method = "Fine-Tuned"
     response_time = time.time() - start_time
 
     st.markdown(f"**Answer:** {answer}")
