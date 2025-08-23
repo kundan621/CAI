@@ -1,5 +1,6 @@
 
 import os
+from dotenv import load_dotenv
 import re
 import pickle
 import faiss
@@ -14,6 +15,7 @@ import json
 from openai import OpenAI
 import logging
 
+load_dotenv()
 # ---------------- Logging Setup ----------------
 logging.basicConfig(
     level=logging.INFO,
@@ -58,9 +60,13 @@ try:
         meta: List[Dict] = pickle.load(f)
     embed_model = SentenceTransformer(EMBED_MODEL)
     reranker = CrossEncoder(CROSS_ENCODER)
+    api_key = os.getenv("HF_API_KEY")
+    if not api_key:
+        logger.error("HF_API_KEY environment variable not set. Please check your .env file or environment.")
+        raise ValueError("HF_API_KEY environment variable not set.")
     client = OpenAI(
         base_url="https://router.huggingface.co/v1",
-        api_key = os.getenv("HF_API_KEY")
+        api_key=api_key
     )
 except Exception as e:
     logger.error(f"Error loading models or indexes: {e}")
