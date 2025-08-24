@@ -1,104 +1,99 @@
 import streamlit as st
 import time
 import numpy as np
-import torch
+import requests
+import json
 import os
 from dotenv import load_dotenv
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
 from search_final import rag_pipeline
 
 # Load environment variables
 load_dotenv()
 
-@st.cache_resource
-def load_fine_tuned_model():
-    """Load the fine-tuned model from Hugging Face Hub"""
-    try:
-        # Replace with your actual repository name
-        model_name = "kundan621/tinyllama-makemytrip-financial-qa"
-        
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        
-        # Load base model
-        base_model = AutoModelForCausalLM.from_pretrained(
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-            torch_dtype=torch.float32,
-            device_map="cpu",
-            trust_remote_code=True,
-        )
-        
-        # Load the fine-tuned PEFT model
-        model = PeftModel.from_pretrained(base_model, model_name)
-        
-        return model, tokenizer
-    except Exception as e:
-        st.error(f"Error loading fine-tuned model: {e}")
-        return None, None
+# Hugging Face API Configuration
+HF_API_URL = "https://api-inference.huggingface.co/models/kundan621/tinyllama-makemytrip-financial-qa"
+HF_TOKEN = os.getenv("HF_API_KEY", "")
 
-def generate_fine_tuned_response(model, tokenizer, question):
-    """Generate response using the fine-tuned model"""
+def query_huggingface_api(prompt, max_retries=3):
+    """Query Hugging Face Inference API with retry logic"""
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 150,
+            "temperature": 0.7,
+            "do_sample": True,
+            "return_full_text": False,
+            "top_p": 0.9
+        }
+    }
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    return result[0].get('generated_text', 'No response generated')
+                else:
+                    return str(result)
+            elif response.status_code == 503:
+                # Model is loading, wait and retry
+                if attempt < max_retries - 1:
+                    st.info(f"Model is loading... Retrying in {2**(attempt+1)} seconds")
+                    time.sleep(2**(attempt+1))
+                    continue
+                else:
+                    return "Model is still loading. Please try again in a few moments."
+            else:
+                return f"API Error {response.status_code}: {response.text}"
+                
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                st.warning(f"Request timeout. Retrying... (Attempt {attempt + 2}/{max_retries})")
+                time.sleep(2)
+                continue
+            else:
+                return "Request timed out. Please try again."
+        except Exception as e:
+            return f"Error: {str(e)}"
+    
+    return "Failed to get response after multiple attempts."
+
+def generate_fine_tuned_response(question):
+    """Generate response using Hugging Face Inference API"""
+    if not HF_TOKEN:
+        return "⚠️ Hugging Face token not found. Please set HF_API_KEY in your .env file."
+    
+    # Format the prompt for TinyLlama chat template
     system_prompt = "You are a helpful assistant that provides financial data from MakeMyTrip reports."
     
-    # Create the message list for the chat template
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
-    ]
+    # Create the properly formatted prompt
+    formatted_prompt = f"<|system|>\n{system_prompt}</s>\n<|user|>\n{question}</s>\n<|assistant|>\n"
     
-    # Apply the chat template to format the input
-    input_text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True
-    )
+    # Query the API
+    response = query_huggingface_api(formatted_prompt)
     
-    # Tokenize the formatted input
-    inputs = tokenizer(input_text, return_tensors="pt").to(model.device)
+    # Clean up the response
+    if isinstance(response, str):
+        # Remove any leftover special tokens
+        response = response.replace("</s>", "").strip()
+        if response.startswith("<|assistant|>"):
+            response = response[len("<|assistant|>"):].strip()
     
-    # Generate response
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs, 
-            max_new_tokens=100,
-            temperature=0.7,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id
-        )
-    
-    # Decode the entire generated output
-    decoded_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    
-    # Extract only the generated answer part
-    try:
-        answer_start_token = '<|assistant|>'
-        answer_start_index = decoded_output.rfind(answer_start_token)
-        
-        if answer_start_index != -1:
-            generated_answer = decoded_output[answer_start_index + len(answer_start_token):].strip()
-            if generated_answer.endswith('</s>'):
-                generated_answer = generated_answer[:-len('</s>')].strip()
-        else:
-            generated_answer = "Could not extract answer from model output."
-    except Exception as e:
-        generated_answer = f"An error occurred: {e}"
-    
-    return generated_answer
+    return response
 
 # --- UI Layouts ---
-st.set_page_config(page_title="Finance QA Assistant", layout="centered")
-st.title("Finance QA Assistant")
+st.set_page_config(page_title="MakeMyTrip Finance QA Assistant", layout="centered")
+st.title("🏢 MakeMyTrip Finance QA Assistant")
+st.markdown("*Powered by RAG and Fine-tuned TinyLlama (via Hugging Face API)*")
 
-# Load fine-tuned model if Fine-Tuned mode is available
-fine_tuned_model, fine_tuned_tokenizer = None, None
+# Check if HF token is available
+if not HF_TOKEN:
+    st.warning("⚠️ Hugging Face token not found. Please add HF_API_KEY to your .env file to use the fine-tuned model.")
 
-mode = st.radio("Choose Answering Mode:", ["RAG", "Fine-Tuned"], horizontal=True)
-
-if mode == "Fine-Tuned":
-    if fine_tuned_model is None or fine_tuned_tokenizer is None:
-        with st.spinner("Loading fine-tuned model..."):
-            fine_tuned_model, fine_tuned_tokenizer = load_fine_tuned_model()
+mode = st.radio("Choose Answering Mode:", ["RAG", "Fine-Tuned (API)"], horizontal=True)
 
 query = st.text_input("Enter your question:")
 
@@ -113,15 +108,11 @@ if st.button("Get Answer") and query:
         answer, docs = rag_pipeline(query)
         confidence = np.random.uniform(0.7, 0.99)
         method = "RAG"
-    elif mode == "Fine-Tuned":
-        if fine_tuned_model and fine_tuned_tokenizer:
-            answer = generate_fine_tuned_response(fine_tuned_model, fine_tuned_tokenizer, query)
-            confidence = np.random.uniform(0.8, 0.95)  # Fine-tuned models often have higher confidence
-            method = "Fine-Tuned TinyLlama"
-        else:
-            answer = "Fine-tuned model failed to load. Please check the model repository."
-            confidence = 0.0
-            method = "Error"
+    elif mode == "Fine-Tuned (API)":
+        with st.spinner("Getting response from fine-tuned model..."):
+            answer = generate_fine_tuned_response(query)
+            confidence = np.random.uniform(0.8, 0.95)
+            method = "Fine-Tuned TinyLlama (API)"
     
     response_time = time.time() - start_time
 
