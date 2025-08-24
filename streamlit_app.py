@@ -13,25 +13,29 @@ load_dotenv()
 
 @st.cache_resource
 def load_fine_tuned_model():
-    """Load the fine-tuned model from Hugging Face Hub"""
+    """Load the fine-tuned model from local directory"""
     try:
-        # Replace with your actual repository name
-        model_name = "kundan621/tinyllama-makemytrip-financial-qa"
+        # Local model path
+        local_model_path = "./fine_tuned_tinyllama_makemytrip"
         
-        # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        # Check if local model exists
+        if not os.path.exists(local_model_path):
+            st.error(f"Local model not found at {local_model_path}")
+            return None, None
         
-        # Load base model
-        base_model = AutoModelForCausalLM.from_pretrained(
-            "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        # Load tokenizer from local directory
+        tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+        
+        # Load the fine-tuned model directly from local directory
+        # This includes both base model and PEFT adapter
+        model = AutoModelForCausalLM.from_pretrained(
+            local_model_path,
             torch_dtype=torch.float32,
             device_map="cpu",
             trust_remote_code=True,
         )
         
-        # Load the fine-tuned PEFT model
-        model = PeftModel.from_pretrained(base_model, model_name)
-        
+        st.success("✅ Fine-tuned model loaded successfully from local directory!")
         return model, tokenizer
     except Exception as e:
         st.error(f"Error loading fine-tuned model: {e}")
@@ -87,17 +91,18 @@ def generate_fine_tuned_response(model, tokenizer, question):
     return generated_answer
 
 # --- UI Layouts ---
-st.set_page_config(page_title="Finance QA Assistant", layout="centered")
-st.title("Finance QA Assistant")
+st.set_page_config(page_title="MakeMyTrip Finance QA Assistant", layout="centered")
+st.title("🏢 MakeMyTrip Finance QA Assistant")
+st.markdown("*Powered by RAG and Fine-tuned TinyLlama (Local Model)*")
 
 # Load fine-tuned model if Fine-Tuned mode is available
 fine_tuned_model, fine_tuned_tokenizer = None, None
 
-mode = st.radio("Choose Answering Mode:", ["RAG", "Fine-Tuned"], horizontal=True)
+mode = st.radio("Choose Answering Mode:", ["RAG", "Fine-Tuned (Local)"], horizontal=True)
 
-if mode == "Fine-Tuned":
+if mode == "Fine-Tuned (Local)":
     if fine_tuned_model is None or fine_tuned_tokenizer is None:
-        with st.spinner("Loading fine-tuned model..."):
+        with st.spinner("Loading fine-tuned model from local directory..."):
             fine_tuned_model, fine_tuned_tokenizer = load_fine_tuned_model()
 
 query = st.text_input("Enter your question:")
@@ -113,13 +118,13 @@ if st.button("Get Answer") and query:
         answer, docs = rag_pipeline(query)
         confidence = np.random.uniform(0.7, 0.99)
         method = "RAG"
-    elif mode == "Fine-Tuned":
+    elif mode == "Fine-Tuned (Local)":
         if fine_tuned_model and fine_tuned_tokenizer:
             answer = generate_fine_tuned_response(fine_tuned_model, fine_tuned_tokenizer, query)
             confidence = np.random.uniform(0.8, 0.95)  # Fine-tuned models often have higher confidence
-            method = "Fine-Tuned TinyLlama"
+            method = "Fine-Tuned TinyLlama (Local)"
         else:
-            answer = "Fine-tuned model failed to load. Please check the model repository."
+            answer = "Fine-tuned model failed to load. Please check the local model directory."
             confidence = 0.0
             method = "Error"
     
