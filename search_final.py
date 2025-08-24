@@ -49,6 +49,11 @@ FINANCE_DOMAINS = [
     "subsidiaries","shareholders equity","expenses","earnings","debt","amortization","depreciation"
 ]
 
+ALLOWED_COMPANY = ["make my trip","mmt"]
+
+# crude regex to detect "company-like" words (any capitalized word(s) followed by Ltd, Inc, Company, etc.)
+COMPANY_PATTERN = re.compile(r"\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:Ltd|Limited|Inc|Corporation|Corp|LLC|Group|Company|Bank))\b", re.IGNORECASE)
+
 # ---------------- Load Indexes ----------------
 logger.info("Loading FAISS, BM25, metadata, and models...")
 try:
@@ -105,11 +110,38 @@ finance_embeds = embed_model.encode(FINANCE_DOMAINS, convert_to_tensor=True)
 
 def validate_query(query: str, threshold: float = 0.5) -> bool:
     q_lower = query.lower()
+    
+    # Blocklist check
     if any(bad in q_lower for bad in BLOCKED_TERMS):
+        print("[Guardrail] Rejected by blocklist.")
         return False
+
+    # Check for company mentions
+    companies_found = COMPANY_PATTERN.findall(query)
+    if companies_found:
+        # If any company is mentioned, only allow MakeMyTrip
+        if not any(ALLOWED_COMPANY in c.lower() for c in companies_found):
+            print(f"[Guardrail] Rejected: company mention {companies_found}, not {ALLOWED_COMPANY}.")
+            return False
+    
+    # Semantic similarity check with financial domain
     q_emb = embed_model.encode(query, convert_to_tensor=True)
     sim_scores = util.cos_sim(q_emb, finance_embeds)
-    return float(sim_scores.max()) > threshold
+    max_score = float(sim_scores.max())
+
+    if max_score > threshold:
+        print(f"[Guardrail] Accepted (semantic match {max_score:.2f})")
+        return True
+    else:
+        print(f"[Guardrail] Rejected (low semantic score {max_score:.2f})")
+        return False
+
+#-------------------Output Guardrail------------------
+def validate_output(answer: str, context_docs: List[Dict]) -> str:
+    combined_context = " ".join([doc["content"].lower() for doc in context_docs])
+    if answer.lower() in combined_context:
+        return answer
+    return "The information could not be verified in the financial statement attached."
 
 # ---------------- Preprocess ----------------
 def preprocess_query(query: str, remove_stopwords: bool = True) -> str:
@@ -208,9 +240,9 @@ def rag_pipeline(query: str, top_k: int = 5, candidate_k: int = 50, alpha: float
             # Pass top 5 chunks as context
             context_text = "\n".join([d["content"] for d in reranked])
             answer = get_mistral_answer(query, context_text)
-
-        logger.info(f"Final Answer: {answer}")
-        return answer, reranked
+        final_answer = answer #validate_output(answer, reranked)
+        logger.info(f"Final Answer: {final_answer}")
+        return final_answer, reranked
     except Exception as e:
         logger.error(f"Error in RAG pipeline: {e}")
         return f"Error in RAG pipeline: {e}", []
